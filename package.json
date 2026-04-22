@@ -1,8 +1,20 @@
 {
   "name": "codex-account-switcher",
   "version": "1.0.0",
-  "description": "Codex 账号切号器（Windows）",
+  "description": "Codex切号器 / Codex账号切换工具（Windows）",
   "author": "local",
+  "keywords": [
+    "codex切号器",
+    "codex账号切换",
+    "codex账号切号",
+    "codex切换账号",
+    "codex多账号",
+    "codex账号管理",
+    "chatgpt账号切换",
+    "openai账号切换",
+    "codex-account-switcher",
+    "account-switcher"
+  ],
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {

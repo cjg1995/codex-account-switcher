@@ -1,6 +1,8 @@
-# Codex Account Switcher
+# Codex Account Switcher / Codex切号器
 
-Codex Account Switcher 是一个面向 Windows 的 Electron 桌面工具，用来管理多个 ChatGPT 登录型 Codex 账号。它会加密保存每个账号的 `auth.json` 快照，并在切换账号时原子覆盖当前用户的 `%USERPROFILE%\.codex\auth.json`。
+Codex Account Switcher 是一个面向 Windows 的 Codex切号器、Codex账号切换工具，用来管理多个 ChatGPT 登录型 Codex 账号。它会加密保存每个账号的 `auth.json` 快照，并在切换账号时原子覆盖当前用户的 `%USERPROFILE%\.codex\auth.json`。
+
+常见搜索词：Codex切号器、codex切号器、Codex账号切换、codex账号切换、Codex账号切号、codex账号切号、Codex切换账号、codex切换账号、Codex多账号、codex多账号、Codex账号管理、ChatGPT账号切换、OpenAI账号切换。
 
 ## 功能
 
