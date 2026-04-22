@@ -1,0 +1,38 @@
+appId: com.local.codex-account-switcher
+productName: Codex切号器
+forceCodeSigning: false
+directories:
+  output: release-fixed
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - '!{tsconfig.json,tsconfig.node.json,vitest.config.ts}'
+  - out/**
+
+extraResources:
+  - from: resources
+    to: resources
+    filter:
+      - '**/*'
+
+win:
+  signAndEditExecutable: false
+  target:
+    - target: portable
+      arch:
+        - x64
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+portable:
+  artifactName: CodexSwitcher-portable.exe
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
