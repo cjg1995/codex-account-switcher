@@ -160,6 +160,14 @@ function messageFromUnknown(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function isUnauthorizedRefreshError(error: unknown): boolean {
+  return /401|unauthor|expired|token/i.test(messageFromUnknown(error))
+}
+
+function statusFromRefreshError(error: unknown): AccountStatus {
+  return isUnauthorizedRefreshError(error) ? 'unauthorized' : 'app_server_failed'
+}
+
 function emptyImportAuthJsonSummary(files = 0): ImportAuthJsonSummary {
   return {
     files,
@@ -1015,9 +1023,8 @@ export class AccountService {
       try {
         readRes = await client.readAccount(true)
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
         const patch: RefreshAccountPatch = {
-          status: /401|unauthor|expired|token/i.test(msg) ? 'unauthorized' : 'app_server_failed',
+          status: statusFromRefreshError(e),
           lastRefreshedAt: new Date().toISOString()
         }
         const stable = this.tryReadStableFromTempHome(home)
@@ -1048,8 +1055,8 @@ export class AccountService {
         let rateRaw: unknown
         try {
           rateRaw = await this.readRateLimitsWithRepair(client)
-        } catch {
-          patch.status = 'no_quota'
+        } catch (e) {
+          patch.status = statusFromRefreshError(e)
           patch.lastRefreshedAt = new Date().toISOString()
           const stable = this.tryReadStableFromTempHome(home)
           if (stable) patch.stableFingerprint = stable

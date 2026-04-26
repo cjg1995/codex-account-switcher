@@ -22,6 +22,11 @@ type SpawnTarget = {
   args: string[]
 }
 
+const DEFAULT_RPC_TIMEOUT_MS = 20_000
+const ACCOUNT_READ_TIMEOUT_MS = 30_000
+const LOGIN_START_TIMEOUT_MS = 30_000
+const CHAT_SEND_TIMEOUT_MS = 45_000
+
 export type ChatMessageResult = {
   sessionRateLimits: unknown | null
 }
@@ -34,7 +39,12 @@ export class CodexRpcClient {
   private lastServerRequest: { method: string; params: unknown } | null = null
   private pending = new Map<
     number | string,
-    { resolve: (v: unknown) => void; reject: (e: Error) => void }
+    {
+      method: string
+      resolve: (v: unknown) => void
+      reject: (e: Error) => void
+      timeout: ReturnType<typeof setTimeout> | null
+    }
   >()
   private notifyHandlers = new Map<string, Set<NotifyHandler>>()
   private loginWaitAbort: (() => void) | null = null
@@ -104,16 +114,35 @@ export class CodexRpcClient {
     return this.lastServerRequest
   }
 
+  private buildRpcTimeoutError(method: string, timeoutMs: number): Error {
+    const lastServerMethod = this.lastServerRequest?.method ? `；最近服务端请求：${this.lastServerRequest.method}` : ''
+    const stderrHint = this.getLastStderrHint()
+    const stderrDetail = stderrHint ? `\n--- stderr ---\n${stderrHint}` : ''
+    return new Error(`RPC ${method} 超时（${timeoutMs}ms）${lastServerMethod}${stderrDetail}`)
+  }
+
+  private rejectPending(id: number | string, error: Error): void {
+    const pending = this.pending.get(id)
+    if (!pending) return
+    this.pending.delete(id)
+    if (pending.timeout != null) clearTimeout(pending.timeout)
+    pending.reject(error)
+  }
+
+  private rejectAllPending(error: Error): void {
+    const entries = Array.from(this.pending.keys())
+    for (const id of entries) {
+      this.rejectPending(id, error)
+    }
+  }
+
   async start(): Promise<void> {
     if (this.proc) throw new Error('app-server 已启动')
     this.stderrBuf = ''
     this.proc = this.createChild()
     this.proc.stderr?.on('data', (c: Buffer) => this.appendStderr(c))
     this.proc.on('error', (err) => {
-      for (const [, { reject }] of this.pending) {
-        reject(err instanceof Error ? err : new Error(String(err)))
-      }
-      this.pending.clear()
+      this.rejectAllPending(err instanceof Error ? err : new Error(String(err)))
     })
     this.proc.on('exit', (code, signal) => {
       const hint = this.getLastStderrHint()
@@ -121,10 +150,7 @@ export class CodexRpcClient {
         hint.length > 0
           ? `codex app-server 退出 code=${code} signal=${signal}\n--- stderr ---\n${hint}`
           : `codex app-server 退出 code=${code} signal=${signal}`
-      for (const [, { reject }] of this.pending) {
-        reject(new Error(msg))
-      }
-      this.pending.clear()
+      this.rejectAllPending(new Error(msg))
     })
     this.rl = readline.createInterface({ input: this.proc.stdout })
     this.rl.on('line', (line) => this.dispatchLine(line))
@@ -155,6 +181,7 @@ export class CodexRpcClient {
       const p = this.pending.get(id)
       if (p) {
         this.pending.delete(id)
+        if (p.timeout != null) clearTimeout(p.timeout)
         if (msg.error) {
           const e = msg.error as { message?: string }
           p.reject(new Error(e.message ?? 'JSON-RPC error'))
@@ -189,18 +216,25 @@ export class CodexRpcClient {
     this.send({ id, result: {} })
   }
 
-  private request<T>(method: string, params?: unknown): Promise<T> {
+  private request<T>(method: string, params?: unknown, timeoutMs = DEFAULT_RPC_TIMEOUT_MS): Promise<T> {
     const id = this.nextId++
     return new Promise<T>((resolve, reject) => {
+      const timeout =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              this.rejectPending(id, this.buildRpcTimeoutError(method, timeoutMs))
+            }, timeoutMs)
+          : null
       this.pending.set(id, {
+        method,
         resolve: (v) => resolve(v as T),
-        reject
+        reject,
+        timeout
       })
       try {
         this.send({ method, id, params })
       } catch (e) {
-        this.pending.delete(id)
-        reject(e instanceof Error ? e : new Error(String(e)))
+        this.rejectPending(id, e instanceof Error ? e : new Error(String(e)))
       }
     })
   }
@@ -222,7 +256,7 @@ export class CodexRpcClient {
   async loginWithChatgpt(): Promise<{ loginId: string; authUrl: string }> {
     const res = (await this.request('account/login/start', {
       type: 'chatgpt'
-    })) as {
+    }, LOGIN_START_TIMEOUT_MS)) as {
       loginId?: string
       authUrl?: string
     }
@@ -239,7 +273,7 @@ export class CodexRpcClient {
   }> {
     const res = (await this.request('account/login/start', {
       type: 'chatgptDeviceCode'
-    })) as {
+    }, LOGIN_START_TIMEOUT_MS)) as {
       loginId?: string
       verificationUrl?: string
       userCode?: string
@@ -285,7 +319,7 @@ export class CodexRpcClient {
   }
 
   async readAccount(refreshToken: boolean): Promise<unknown> {
-    return this.request('account/read', { refreshToken })
+    return this.request('account/read', { refreshToken }, ACCOUNT_READ_TIMEOUT_MS)
   }
 
   async readRateLimits(): Promise<unknown> {
@@ -379,7 +413,7 @@ export class CodexRpcClient {
   }
 
   private async sendChatMessageViaTurnApi(message: string): Promise<ChatMessageResult> {
-    const threadRes = (await this.request('thread/start', {})) as {
+    const threadRes = (await this.request('thread/start', {}, DEFAULT_RPC_TIMEOUT_MS)) as {
       thread?: { id?: string | null; path?: string | null } | null
       threadId?: string | null
     }
@@ -390,7 +424,7 @@ export class CodexRpcClient {
     const turnRes = (await this.request('turn/start', {
       threadId,
       input: [{ type: 'text', text: message }]
-    })) as {
+    }, DEFAULT_RPC_TIMEOUT_MS)) as {
       turn?: { id?: string | null }
     }
     const turnId = turnRes.turn?.id ?? null
@@ -438,14 +472,14 @@ export class CodexRpcClient {
         model: 'gpt-4o',
         messages: [{ role: 'user', content: message }],
         max_tokens: 10
-      })
+      }, CHAT_SEND_TIMEOUT_MS)
       return { sessionRateLimits: null }
     } catch {
       // 继续尝试
     }
 
     try {
-      await this.request('chat/send', { message })
+      await this.request('chat/send', { message }, CHAT_SEND_TIMEOUT_MS)
       return { sessionRateLimits: null }
     } catch {
       const detail = firstError?.message?.trim()
@@ -475,7 +509,7 @@ export class CodexRpcClient {
       /* */
     }
     this.proc = null
-    this.pending.clear()
+    this.rejectAllPending(new Error('codex app-server 已关闭'))
     this.notifyHandlers.clear()
     this.stderrBuf = ''
     this.lastServerRequest = null
